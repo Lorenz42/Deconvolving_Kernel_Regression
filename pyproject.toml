@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deconvolving_kernel"
+version = "0.1.0"
+authors = [
+  { name="Lorenz Hübel", email="lorenz.huebel@gmail.com" },
+]
+description = "Contains the code for deconvolving kernel regression."
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/deconvolving_kernel"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deconvolving_kernel"]
