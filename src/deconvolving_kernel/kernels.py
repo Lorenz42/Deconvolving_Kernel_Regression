@@ -92,8 +92,8 @@ def calculate_difference_matrix(
     covariance_matrices: np.ndarray,
     bandwidth: float,
     bandwidth_scaling: bool=False,
-    coordinate_system_rotation: bool=True,
-) -> np.ndarray:
+    eigenvalue_calculation: bool=True,
+):
     """
     Args:
         query_points (np.ndarray): Shape (M, D) representing N query points in D dimensions.
@@ -105,6 +105,50 @@ def calculate_difference_matrix(
         differences (np.ndarray): Shape (M, N, D) representing the differences.
         lambda_val: (np.ndarray): Shape (N,D) representing the vector of lambda values for each data point.
     """
+
+    M = query_points.shape[0]
+    N = data_points.shape[0]
+    D = query_points.shape[1]
+
+    differences = query_points[:, np.newaxis, :] - data_points[np.newaxis, :, :]
+    eigenvalues = np.zeros((N, D))
+    h = np.full((N), bandwidth)
+
+    if eigenvalue_calculation:
+        # Ensure the Hermitian symmetry
+        covariance_matrices_sym = 0.5 * (covariance_matrices + covariance_matrices.transpose(0, 2, 1))
+
+        # This code returns the eigenvalues (N, D) and the orthogonal
+        # matrices corresponding to the eigenvectors (N, D, D)
+
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance_matrices_sym)
+
+        # This Einstein summation transposes the matrices that contain the
+        # eigenvectors in its columns and performs the matrix vector multiplication
+        # at the same time.
+        differences = np.einsum('mnd, njd -> mnj', differences, eigenvectors)
+
+    if bandwidth_scaling:
+        traces = np.trace(covariance_matrices, axis1=1, axis2=2)
+        scaling = traces /np.mean(traces)
+        h = h * scaling
+
+
+    differences = differences / h[np.newaxis, :, np.newaxis]
+
+    # calculating lambda_val
+    sigmas = np.sqrt(np.abs(eigenvalues))
+    lambda_val = h[:, np.newaxis]/ sigmas
+
+    return differences, lambda_val
+
+
+
+        
+
+
+    
+
     
     
 
@@ -123,7 +167,7 @@ def deconvolving_kernel_rectangular_support(
         bandwidth: float,
         bandwidth_scaling: bool=False,
         kernel_support_scaled_fourier_domain: bool=False,
-        coordinate_system_rotation: bool=True,
+        eigenvalue_calculation: bool=True,
         discrete_fourier_transformation_grid_size: int=1000,
 ) -> np.ndarray:
     """
@@ -145,6 +189,21 @@ def deconvolving_kernel_rectangular_support(
 
     # check that the input dimensions match
     M, N, D = check_dimensions(query_points, data_points, covariance_matrices)
+
+    differences, lambda_val = calculate_difference_matrix(query_points, 
+                                                          data_points, 
+                                                          covariance_matrices, 
+                                                          bandwidth, 
+                                                          bandwidth_scaling, 
+                                                          eigenvalue_calculation)
+    
+    kernel_values = deconvolving_kernel_1d(differences, lambda_val[np.newaxis, :,:])
+    kernel_values = np.prod(kernel_values, axis=2)
+    kernel_values = kernel_values/(h[np.newaxis, :]**D)
+
+    return kernel_values
+
+
 
 
 
