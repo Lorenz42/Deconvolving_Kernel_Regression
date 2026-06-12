@@ -63,7 +63,7 @@ def check_dimensions(
             f"but data_point has feature dimension D_1={D_1}. They must match."
         )
 
-    # 2. Check that the number of data points M matches the number of covariance matrices
+    # 2. Check that the number of data points N matches the number of covariance matrices
     if N != N_1:
         raise ValueError(
             f"Dimension mismatch: data_point has N={N} points, "
@@ -92,12 +92,14 @@ def calculate_difference_matrix(
     covariance_matrices: np.ndarray,
     bandwidth: float,
     bandwidth_scaling: bool=False,
+    rescaled_norm: bool=False,
     eigenvalue_calculation: bool=True,
+
 ):
     """
     Args:
-        query_points (np.ndarray): Shape (M, D) representing N query points in D dimensions.
-        data_points (np.ndarray): Shape (N, D) representing M data points in D dimensions.
+        query_points (np.ndarray): Shape (M, D) representing M query points in D dimensions.
+        data_points (np.ndarray): Shape (N, D) representing N data points in D dimensions.
         covariance_matrices (np.ndarray): Shape (N, D, D) or (D, D) covariance matrices.
         bandwidth (float): bandwidth parameter
         
@@ -113,7 +115,7 @@ def calculate_difference_matrix(
 
     differences = query_points[:, np.newaxis, :] - data_points[np.newaxis, :, :]
     eigenvalues = np.zeros((N, D))
-    h = np.full((N), bandwidth)
+    h = np.full((N,D), bandwidth)
 
     if eigenvalue_calculation:
         # Ensure the Hermitian symmetry
@@ -127,19 +129,22 @@ def calculate_difference_matrix(
         # This Einstein summation transposes the matrices that contain the
         # eigenvectors in its columns and performs the matrix vector multiplication
         # at the same time.
-        differences = np.einsum('mnd, njd -> mnj', differences, eigenvectors)
+        differences = np.einsum('mnd, ndj -> mnj', differences, eigenvectors)
+
+        if rescaled_norm:
+            h = h * np.sqrt(np.abs(eigenvalues))
 
     if bandwidth_scaling:
         traces = np.trace(covariance_matrices, axis1=1, axis2=2)
         scaling = traces /np.mean(traces)
-        h = h * scaling
+        h = h * scaling[:, np.newaxis]
 
 
-    differences = differences / h[np.newaxis, :, np.newaxis]
+    differences = differences / h[np.newaxis, :, :]
 
     # calculating lambda_val
     sigmas = np.sqrt(np.abs(eigenvalues))
-    lambda_val = h[:, np.newaxis]/ sigmas
+    lambda_val = h[:, :]/ (sigmas+ 1e-10)
 
     return differences, h, lambda_val
 
@@ -179,19 +184,19 @@ def deconvolving_kernel_rectangular_support(
         covariance_matrices: np.ndarray,
         bandwidth: float,
         bandwidth_scaling: bool=False,
-        kernel_support_scaled_fourier_domain: bool=False,
+        rescaled_norm: bool=False,
         eigenvalue_calculation: bool=True,
         discrete_fourier_transformation_grid_size: int=1000,
 ) -> np.ndarray:
     """
     Args:
-        query_points (np.ndarray): Shape (M, D) representing N query points in D dimensions.
-        data_points (np.ndarray): Shape (N, D) representing M data points in D dimensions.
-        covariance_matrices (np.ndarray): Shape (N, D, D) or (D, D) covariance matrices.
+        query_points (np.ndarray): Shape (M, D) representing M query points in D dimensions.
+        data_points (np.ndarray): Shape (N, D) representing N data points in D dimensions.
+        covariance_matrices (np.ndarray): Shape (N, D, D) covariance matrices.
         bandwidth (float): The smoothing bandwidth parameter.
         bandwidth_scaling (bool): Whether to scale the bandwidth dynamically. Defaults to False.
-        kernel_support_scaled_fourier_domain (bool): Whether we use the norm $\lVert \cdot \lVert_{\Sigma_i^{-1}}$. Defaults to False.
-        coordinate_system_rotation (bool): Whether to rotate the coordinate system. Defaults to True.
+        rescaled_norm (bool): Whether we use the norm $\lVert \cdot \lVert_{\Sigma_i^{-1}}$. Defaults to False.
+        eigenvalue_calculation (bool): Whether to rotate the coordinate system. Defaults to True.
         discrete_fourier_transformation_grid_size (int): The number of points per dimension for the DFT. Defaults to 1000.
 
 
@@ -207,12 +212,14 @@ def deconvolving_kernel_rectangular_support(
                                                           data_points, 
                                                           covariance_matrices, 
                                                           bandwidth, 
-                                                          bandwidth_scaling, 
+                                                          bandwidth_scaling,
+                                                          rescaled_norm, 
                                                           eigenvalue_calculation)
     
     kernel_values = deconvolving_kernel_1d(differences, lambda_val[np.newaxis, :,:])
     kernel_values = np.prod(kernel_values, axis=2)
-    kernel_values = kernel_values/(h[np.newaxis, :]**D)
+    bandwidth_normalization = np.prod(h, axis=1)
+    kernel_values = kernel_values/(bandwidth_normalization[np.newaxis, :])
 
     return kernel_values
 
@@ -224,19 +231,19 @@ def epanechnikov_kernel(
         covariance_matrices: np.ndarray,
         bandwidth: float,
         bandwidth_scaling: bool=False,
-        kernel_support_scaled_fourier_domain: bool=False,
+        rescaled_norm: bool=False,
         eigenvalue_calculation: bool=True,
         discrete_fourier_transformation_grid_size: int=1000,
 ) -> np.ndarray:
     """
     Args:
-        query_points (np.ndarray): Shape (M, D) representing N query points in D dimensions.
-        data_points (np.ndarray): Shape (N, D) representing M data points in D dimensions.
-        covariance_matrices (np.ndarray): Shape (N, D, D) or (D, D) covariance matrices.
+        query_points (np.ndarray): Shape (M, D) representing M query points in D dimensions.
+        data_points (np.ndarray): Shape (N, D) representing N data points in D dimensions.
+        covariance_matrices (np.ndarray): Shape (N, D, D) covariance matrices.
         bandwidth (float): The smoothing bandwidth parameter.
         bandwidth_scaling (bool): Whether to scale the bandwidth dynamically. Defaults to False.
-        kernel_support_scaled_fourier_domain (bool): Whether we use the norm $\lVert \cdot \lVert_{\Sigma_i^{-1}}$. Defaults to False.
-        coordinate_system_rotation (bool): Whether to rotate the coordinate system. Defaults to True.
+        rescaled_norm (bool): Whether we use the norm $\lVert \cdot \lVert_{\Sigma_i^{-1}}$. Defaults to False.
+        eigenvalue_calculation (bool): Whether to rotate the coordinate system. Defaults to True.
         discrete_fourier_transformation_grid_size (int): The number of points per dimension for the DFT. Defaults to 1000.
 
 
@@ -251,15 +258,47 @@ def epanechnikov_kernel(
                                                  covariance_matrices,
                                                  bandwidth,
                                                  bandwidth_scaling,
-                                                 eigenvalue_calculation=False) 
+                                                 rescaled_norm,
+                                                 eigenvalue_calculation) 
     
     norms = np.linalg.norm(differences, axis=2)
     kernel_values = np.zeros_like(norms)
     mask = norms <= 1
     kernel_values[mask] = epanechnikov_normalization_factor(D) * (1 - norms[mask]**2)
-    kernel_values = kernel_values/(h[np.newaxis, :]**D)
-
+    bandwidth_normalization = np.prod(h, axis=1)
+    kernel_values = kernel_values/(bandwidth_normalization[np.newaxis, :])
     return kernel_values
+
+
+# --------------------------------------------------------------------------------
+# In this section, we calculate the kernel regression function for an arbitrary kernel
+
+def kernel_regression(kernel,
+                      query_points,
+                      data_points,
+                      y_values_data_points,
+                      covariance_matrices,
+                      bandwidth,
+                      bandwidth_scaling=False,
+                      rescaled_norm=False,
+                      eigenvalue_calculation=True,
+                      discrete_fourier_transformation_grid_size=1000):
+    
+    kernel_values = kernel(query_points,
+                          data_points,
+                          covariance_matrices,
+                          bandwidth,
+                          bandwidth_scaling,
+                          rescaled_norm,
+                          eigenvalue_calculation,
+                          discrete_fourier_transformation_grid_size)
+    
+    weighted_average = np.sum(kernel_values * y_values_data_points, axis=1)
+    normalization_factor = np.sum(kernel_values, axis=1)
+
+    epsilon = 1e-10
+    return weighted_average / (normalization_factor + epsilon)
+
 
 
 
