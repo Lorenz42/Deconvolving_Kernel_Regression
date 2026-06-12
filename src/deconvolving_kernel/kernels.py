@@ -3,7 +3,7 @@
 # in this work.
 
 import numpy as np
-from scipy.special import wofz
+from scipy.special import wofz, gamma
 
 
 #---------------------------------------------------------------------------
@@ -103,7 +103,8 @@ def calculate_difference_matrix(
         
     Returns:
         differences (np.ndarray): Shape (M, N, D) representing the differences.
-        lambda_val: (np.ndarray): Shape (N,D) representing the vector of lambda values for each data point.
+        h (np.ndarray): Shape (N,)
+        lambda_val (np.ndarray): Shape (N,D) representing the vector of lambda values for each data point.
     """
 
     M = query_points.shape[0]
@@ -140,18 +141,30 @@ def calculate_difference_matrix(
     sigmas = np.sqrt(np.abs(eigenvalues))
     lambda_val = h[:, np.newaxis]/ sigmas
 
-    return differences, lambda_val
+    return differences, h, lambda_val
 
 
+def epanechnikov_normalization_factor(dim: int) -> float:
+    """Calculates the analytical integral of (1 - ||x||^2) * 1{||x|| <= 1}
+    over an arbitrary D-dimensional space.
 
+    Args:
+        dim (int): The dimension of the vector space (D >= 1).
+
+    Returns:
+        float: The total volume (integral) of the function.
+    """
+    if dim < 1:
+        raise ValueError("Dimension must be an integer greater than or equal to 1.")
         
-
-
+    # Calculate the surface area of a unit (D-1)-sphere
+    surface_area = (2 * (np.pi ** (dim / 2))) / gamma(dim / 2)
     
-
+    # Calculate the radial integral chunk: 2 / (D * (D + 2))
+    radial_integral = 2 / (dim * (dim + 2))
     
+    return float(surface_area * radial_integral)
     
-
 
 
 
@@ -190,7 +203,7 @@ def deconvolving_kernel_rectangular_support(
     # check that the input dimensions match
     M, N, D = check_dimensions(query_points, data_points, covariance_matrices)
 
-    differences, lambda_val = calculate_difference_matrix(query_points, 
+    differences, h, lambda_val = calculate_difference_matrix(query_points, 
                                                           data_points, 
                                                           covariance_matrices, 
                                                           bandwidth, 
@@ -202,6 +215,53 @@ def deconvolving_kernel_rectangular_support(
     kernel_values = kernel_values/(h[np.newaxis, :]**D)
 
     return kernel_values
+
+
+
+def epanechnikov_kernel(
+        query_points: np.ndarray,
+        data_points: np.ndarray,
+        covariance_matrices: np.ndarray,
+        bandwidth: float,
+        bandwidth_scaling: bool=False,
+        kernel_support_scaled_fourier_domain: bool=False,
+        eigenvalue_calculation: bool=True,
+        discrete_fourier_transformation_grid_size: int=1000,
+) -> np.ndarray:
+    """
+    Args:
+        query_points (np.ndarray): Shape (M, D) representing N query points in D dimensions.
+        data_points (np.ndarray): Shape (N, D) representing M data points in D dimensions.
+        covariance_matrices (np.ndarray): Shape (N, D, D) or (D, D) covariance matrices.
+        bandwidth (float): The smoothing bandwidth parameter.
+        bandwidth_scaling (bool): Whether to scale the bandwidth dynamically. Defaults to False.
+        kernel_support_scaled_fourier_domain (bool): Whether we use the norm $\lVert \cdot \lVert_{\Sigma_i^{-1}}$. Defaults to False.
+        coordinate_system_rotation (bool): Whether to rotate the coordinate system. Defaults to True.
+        discrete_fourier_transformation_grid_size (int): The number of points per dimension for the DFT. Defaults to 1000.
+
+
+    Returns:
+        kernel_values (np.ndarray): Shape (M, N) representing the kernel values.
+    """
+
+    M, N, D = check_dimensions(query_points, data_points, covariance_matrices)
+
+    differences, h, _ = calculate_difference_matrix(query_points,
+                                                 data_points,
+                                                 covariance_matrices,
+                                                 bandwidth,
+                                                 bandwidth_scaling,
+                                                 eigenvalue_calculation=False) 
+    
+    norms = np.linalg.norm(differences, axis=2)
+    kernel_values = np.zeros_like(norms)
+    mask = norms <= 1
+    kernel_values[mask] = epanechnikov_normalization_factor(D) * (1 - norms[mask]**2)
+    kernel_values = kernel_values/(h[np.newaxis, :]**D)
+
+    return kernel_values
+
+
 
 
 
