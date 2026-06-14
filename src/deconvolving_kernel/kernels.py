@@ -4,6 +4,8 @@
 
 import numpy as np
 from scipy.special import wofz, gamma
+from scipy.fft import fftshift, ifftshift, ifftn
+from scipy.interpolate import RegularGridInterpolator
 
 
 #---------------------------------------------------------------------------
@@ -270,8 +272,68 @@ def epanechnikov_kernel(
     return kernel_values
 
 
+
+
 # --------------------------------------------------------------------------------
 # In this section, we calculate the kernel regression function for an arbitrary kernel
+
+# The kernel functions build intermediate arrays of shape (batch_M, N, D), and the
+# deconvolving kernel in particular allocates several complex128 (16 bytes/element)
+# temporaries at once. This factor is a conservative estimate (in bytes) of the peak
+# memory used per element of the (batch_M, N, D) working set, so that the automatically
+# chosen batch size leaves enough head room for those temporaries.
+_BYTES_PER_WORKING_ELEMENT = 16 * 8  # ~8 simultaneous complex128 temporaries
+
+
+def _available_memory_bytes() -> int:
+    """Returns the amount of currently available physical memory in bytes.
+
+    Tries ``psutil`` first and falls back to ``os.sysconf`` on POSIX systems.
+    If neither is available, returns a conservative 1 GiB default.
+    """
+    try:
+        import psutil
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        pass
+    try:
+        import os
+        return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (ValueError, OSError, AttributeError):
+        return 1024 ** 3  # 1 GiB fallback
+
+
+def _choose_query_batch_size(M: int,
+                             N: int,
+                             D: int,
+                             max_memory_bytes=None,
+                             memory_fraction: float=0.8) -> int:
+    """Chooses how many query points to process at once so that the kernel
+    computation fits into the available memory.
+
+    Args:
+        M (int): Total number of query points.
+        N (int): Number of data points.
+        D (int): Feature dimension.
+        max_memory_bytes (int, optional): Memory budget in bytes. If ``None``,
+            ``memory_fraction`` of the currently available memory is used.
+        memory_fraction (float): Fraction of available memory to use when
+            ``max_memory_bytes`` is ``None``. Defaults to 0.8.
+
+    Returns:
+        int: The number of query points per batch (at least 1, at most M).
+    """
+    if max_memory_bytes is None:
+        max_memory_bytes = int(_available_memory_bytes() * memory_fraction)
+
+    # Memory needed per query point for the (1, N, D) working set.
+    bytes_per_query = max(1, N * D * _BYTES_PER_WORKING_ELEMENT)
+
+    batch_size = int(max_memory_bytes // bytes_per_query)
+    # Always make progress with at least one query point per batch and never
+    # use a larger batch than the number of query points we actually have.
+    return max(1, min(M, batch_size))
+
 
 def kernel_regression(kernel,
                       query_points,
@@ -282,22 +344,75 @@ def kernel_regression(kernel,
                       bandwidth_scaling=False,
                       rescaled_norm=False,
                       eigenvalue_calculation=True,
-                      discrete_fourier_transformation_grid_size=1000):
-    
-    kernel_values = kernel(query_points,
-                          data_points,
-                          covariance_matrices,
-                          bandwidth,
-                          bandwidth_scaling,
-                          rescaled_norm,
-                          eigenvalue_calculation,
-                          discrete_fourier_transformation_grid_size)
-    
-    weighted_average = np.sum(kernel_values * y_values_data_points, axis=1)
-    normalization_factor = np.sum(kernel_values, axis=1)
+                      discrete_fourier_transformation_grid_size=1000,
+                      batch_size=None,
+                      max_memory_bytes=None,
+                      memory_fraction=0.8):
+    """Performs kernel regression, batching over query points to bound memory use.
+
+    Computing all kernel values at once requires arrays of shape (M, N, D), which
+    can exceed the available memory when both the number of query points M and the
+    number of data points N are large. To avoid this, the query points are split
+    into batches.
+    Args:
+        kernel (callable): A kernel function (e.g. ``deconvolving_kernel_rectangular_support``
+            or ``epanechnikov_kernel``) returning an (M, N) array of kernel values.
+        query_points (np.ndarray): Shape (M, D) query points.
+        data_points (np.ndarray): Shape (N, D) data points.
+        y_values_data_points (np.ndarray): Shape (N,) response values at the data points.
+        covariance_matrices (np.ndarray): Shape (N, D, D) covariance matrices.
+        bandwidth (float): The smoothing bandwidth parameter.
+        bandwidth_scaling (bool): Whether to scale the bandwidth dynamically. Defaults to False.
+        rescaled_norm (bool): Whether to use the rescaled norm. Defaults to False.
+        eigenvalue_calculation (bool): Whether to rotate the coordinate system. Defaults to True.
+        discrete_fourier_transformation_grid_size (int): DFT grid size. Defaults to 1000.
+        batch_size (int, optional): Number of query points to process per batch. If
+            ``None`` (default), a batch size that fits into memory is chosen automatically.
+        max_memory_bytes (int, optional): Memory budget in bytes used to pick the batch
+            size automatically. If ``None``, ``memory_fraction`` of the currently
+            available memory is used. Ignored when ``batch_size`` is given.
+        memory_fraction (float): Fraction of available memory to use when sizing the
+            batches automatically. Defaults to 0.8.
+
+    Returns:
+        np.ndarray: Shape (M,) the kernel regression prediction at each query point.
+    """
+    query_points = np.asarray(query_points)
+    M = query_points.shape[0]
+    N = data_points.shape[0]
+    D = query_points.shape[1]
+
+    if batch_size is None:
+        batch_size = _choose_query_batch_size(
+            M, N, D,
+            max_memory_bytes=max_memory_bytes,
+            memory_fraction=memory_fraction,
+        )
+    else:
+        batch_size = max(1, int(batch_size))
 
     epsilon = 1e-10
-    return weighted_average / (normalization_factor + epsilon)
+    predictions = np.empty(M, dtype=float)
+
+    for start in range(0, M, batch_size):
+        stop = min(start + batch_size, M)
+        query_batch = query_points[start:stop]
+
+        kernel_values = kernel(query_batch,
+                              data_points,
+                              covariance_matrices,
+                              bandwidth,
+                              bandwidth_scaling,
+                              rescaled_norm,
+                              eigenvalue_calculation,
+                              discrete_fourier_transformation_grid_size)
+
+        weighted_average = np.sum(kernel_values * y_values_data_points, axis=1)
+        normalization_factor = np.sum(kernel_values, axis=1)
+
+        predictions[start:stop] = weighted_average / (normalization_factor + epsilon)
+
+    return predictions
 
 
 
