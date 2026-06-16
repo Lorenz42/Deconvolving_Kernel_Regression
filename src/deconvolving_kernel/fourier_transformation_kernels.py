@@ -113,9 +113,14 @@ def psi(*K_grids, bandwidth, covariance_matrix, list_of_all_covariance_matrices)
         return np.exp(-0.5 * norm).reshape(grid_shape)
 
     normalization = np.zeros_like(K_grids[0])
+    n = list_of_all_covariance_matrices.shape[0]
     for covariance in list_of_all_covariance_matrices:
-        normalization += phi(*K_grids, covariance=covariance)**2    
+        
+        normalization += phi(*K_grids, covariance=covariance)**2  
+
     normalization += 1e-10
+    normalization = normalization / n
+
 
     negative_grids = [-1 * K for K in K_grids]
     numerator = phi(*negative_grids, covariance=covariance_matrix)
@@ -136,7 +141,7 @@ class FourierTransformerND:
                  bandwidth=1,
                  covariance_matrix=None,
                  list_of_all_covariance_matrices=None,
-                 number_of_grid_points_per_dimension=1024,
+                 number_of_grid_points_per_dimension=1000,
                  length_per_dimension=20.0,
                  rescaled_norm=False):
         """Generalized N-dimensional discrete Fourier transformer.
@@ -267,7 +272,7 @@ def deconvolving_kernel_round_support(
                                                  bandwidth,
                                                  bandwidth_scaling=bandwidth_scaling,
                                                  rescaled_norm=False,
-                                                 eigenvalue_calculation=eigenvalue_calculation)
+                                                 eigenvalue_calculation=False)
 
     # Build one deconvolving kernel per data point, since each data point carries
     # its own covariance matrix, and evaluate it at the corresponding differences.
@@ -324,7 +329,7 @@ def deconvolving_kernel_heterogeneous_noise(
                                                  bandwidth,
                                                  bandwidth_scaling=bandwidth_scaling,
                                                  rescaled_norm=False,
-                                                 eigenvalue_calculation=eigenvalue_calculation)
+                                                 eigenvalue_calculation=False)
 
     # Build one deconvolving kernel per data point, since each data point carries
     # its own covariance matrix, and evaluate it at the corresponding differences.

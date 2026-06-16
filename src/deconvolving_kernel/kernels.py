@@ -210,6 +210,9 @@ def deconvolving_kernel_rectangular_support(
     # check that the input dimensions match
     M, N, D = check_dimensions(query_points, data_points, covariance_matrices)
 
+    if eigenvalue_calculation == False and rescaled_norm == True:
+        raise NotImplementedError("This combination of switches does not work. Please set eigenvalue_calculation to True.")
+
     differences, h, lambda_val = calculate_difference_matrix(query_points, 
                                                           data_points, 
                                                           covariance_matrices, 
@@ -254,6 +257,9 @@ def epanechnikov_kernel(
     """
 
     M, N, D = check_dimensions(query_points, data_points, covariance_matrices)
+
+    if eigenvalue_calculation == False and rescaled_norm == True:
+        raise NotImplementedError("This combination of switches does not work. Please set eigenvalue_calculation to True.")
 
     differences, h, _ = calculate_difference_matrix(query_points,
                                                  data_points,
