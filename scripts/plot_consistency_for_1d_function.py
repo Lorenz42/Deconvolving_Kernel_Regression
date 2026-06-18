@@ -141,9 +141,9 @@ for ax, n_samples, solution_epanechnikov, solution_deconvolving, true_solution, 
     ax.plot(query_points, convolved_function, label=r"$(f \ast U)(x)$",
             color=colors[3], linewidth=0.75, linestyle="--")  
 
-    ax.plot(query_points, solution_deconvolving, label="Kernel Regression (Deconvolving kernel)",
+    ax.plot(query_points, solution_deconvolving, label="Kernel Regression \n(Deconvolving kernel)",
             color=colors[0], linewidth=1.5) 
-    ax.plot(query_points, solution_epanechnikov, label="Kernel Regression (Epanechnikov kernel)",
+    ax.plot(query_points, solution_epanechnikov, label="Kernel Regression \n(Epanechnikov kernel)",
             color=colors[3], linewidth=1.5)
 
 
