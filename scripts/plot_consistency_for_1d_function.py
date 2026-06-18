@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from deconvolving_kernel.kernels import epanechnikov_kernel, deconvolving_kernel_rectangular_support, kernel_regression
 
+#-----------------------------------------------------------------------------------
+# First, generate the data and define the function for choosing the optimal solution.
 def test_function(x_values):
     return np.sin(x_values) + np.cos(3*x_values) + 0.1*x_values   
 
@@ -16,8 +18,6 @@ def mse(dataset_1, dataset_2):
     return np.mean((dataset_1 - dataset_2)**2)
 
 def find_best_solution(kernel, test_function, query_points, data_points, y_values_data_points, covariance_matrices, bandwidth_grid):
-    # Ravel so the (M,) regression output and the ground truth are compared
-    # element-wise instead of broadcasting to an (M, M) array.
     true_solution = test_function(query_points).ravel()
     best_solution = np.array([])
     best_error = 1e+20
@@ -36,20 +36,18 @@ def find_best_solution(kernel, test_function, query_points, data_points, y_value
             best_solution = current_solution
     return best_solution, best_bandwidth
 
-
-
-# Set the outputfolder to the figures folder of the project
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-output_folder = os.path.join(project_root, "figures")
-os.makedirs(output_folder, exist_ok=True)
-
-
-
-
+#---------------------------------------------------------------------------------
+# In this section, we choose all the parameters for the simulation.
 query_points = np.linspace(-np.pi, np.pi, 100)[:, np.newaxis]
 x_variance = 0.75
 y_variance = 0.1
 n_samples_list = [100, 1000, 10000, 100000]
+
+
+#---------------------------------------------------------------------------------
+# In this section, we make the computations and store the optimal solution for
+# each sample size in the corresponding lists that are defined below
+
 solutions_epanechnikov = []
 bandwidths_epanechnikov = []
 solutions_deconvolving = []
@@ -57,16 +55,13 @@ bandwidths_deconvolving = []
 solutions_ground_truth = []
 solutions_convolved = []
 
-for n_samples in n_samples_list:
-    
+for n_samples in n_samples_list:   
     data_points, y_values_data_points =  generate_data(test_function, n_samples, x_variance, y_variance)                        # Shape (N, D) = (1, 1)
     covariance_matrices = np.ones((n_samples, 1, 1)) * x_variance
     bandwidth_grid = np.linspace(0.01, 1, 50)
     bandwidth_grid_epanechnikov = np.linspace(0.2, 1, 50)
 
-
-
-
+    # Epanechnikov Kernel Regression
     solution_epanechnikov, bandwidth_epanechnikov = find_best_solution(epanechnikov_kernel, 
                                                                         test_function, 
                                                                         query_points, 
@@ -77,6 +72,7 @@ for n_samples in n_samples_list:
     solutions_epanechnikov.append(solution_epanechnikov)
     bandwidths_epanechnikov.append(bandwidth_epanechnikov)
 
+    # Deconvolving Kernel Regression
     solution_deconvolving, bandwidth_deconvolving = find_best_solution(deconvolving_kernel_rectangular_support, 
                                                                         test_function, 
                                                                         query_points, 
@@ -87,16 +83,11 @@ for n_samples in n_samples_list:
     solutions_deconvolving.append(solution_deconvolving)
     bandwidths_deconvolving.append(bandwidth_deconvolving)
 
-
+    # Ground truth
     true_solution = test_function(query_points)
     solutions_ground_truth.append(true_solution)
 
-
-
-    # Blur the true function with the measurement-noise density N(0, x_variance).
-    # This is the convolved function that the deconvolving kernel aims to recover, so
-    # convolve with the (normalized) Gaussian density evaluated on the grid rather than
-    # with a single random noise realization.
+    # Ground truth convoluted with the noise
     grid_spacing = query_points[1, 0] - query_points[0, 0]
     half_width = min(int(np.ceil(4 * np.sqrt(x_variance) / grid_spacing)),
                     (len(true_solution) - 1) // 2)
@@ -106,6 +97,13 @@ for n_samples in n_samples_list:
     convolved_function = np.convolve(true_solution.ravel(), noise_density, mode='same')
     solutions_convolved.append(convolved_function)
 
+#------------------------------------------------------------------------------
+# In this section, we plot the results and store the resulting image as pdf
+
+# Set the outputfolder to the figures folder of the project
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+output_folder = os.path.join(project_root, "figures")
+os.makedirs(output_folder, exist_ok=True)
 
 # Plot configuration
 plt.rcParams.update({
@@ -145,8 +143,6 @@ for ax, n_samples, solution_epanechnikov, solution_deconvolving, true_solution, 
             color=colors[0], linewidth=1.5) 
     ax.plot(query_points, solution_epanechnikov, label="Kernel Regression \n(Epanechnikov kernel)",
             color=colors[3], linewidth=1.5)
-
-
 
     ax.set_title(rf"$n = {n_samples}$")
     ax.spines['top'].set_visible(False)
