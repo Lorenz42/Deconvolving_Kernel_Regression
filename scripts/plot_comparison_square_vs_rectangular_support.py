@@ -1,8 +1,11 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from skimage import data
+from scipy.interpolate import RegularGridInterpolator
 from deconvolving_kernel.kernels import epanechnikov_kernel, deconvolving_kernel_rectangular_support, kernel_regression
 from deconvolving_kernel.fourier_transformation_kernels import deconvolving_kernel_round_support
+
 
 #----------------------------------------------------------------------------------
 # First, generate the data and define the function for choosing the optimal solution.
@@ -13,7 +16,23 @@ def product_of_cos_function(x_values):
 
 def absolute_value_function(x_values):
     x1 = x_values[:, 0]
-    return np.pi - np.abs(x1)
+    return 1 - np.abs(x1)/np.pi
+
+def cone_function(x_values):
+    return 1 - np.linalg.norm(x_values, axis=1)
+
+cameraman_512 = np.flipud(data.camera()) / 255.0   # normalize to [0, 1]; flip rows so it is not upside down with origin='lower'
+cameraman_grid = np.linspace(-np.pi, np.pi, 512)
+f_cameraman = RegularGridInterpolator(
+    (cameraman_grid, cameraman_grid),
+    cameraman_512,
+    method='linear',
+    bounds_error=False,
+    fill_value=0.5,
+)
+
+def cameraman_function(x_values):
+    return f_cameraman(x_values)
 
 def generate_data(test_function, n_samples, x_covariance, y_variance):
     x_values = np.random.uniform(-np.pi, np.pi, (n_samples, 2))
@@ -47,7 +66,7 @@ def find_best_solution(kernel, test_function, query_points, data_points, y_value
             best_error = mse(current_solution, true_solution)
             best_bandwidth = bandwidth
             best_solution = current_solution
-    return best_solution, best_bandwidth, error_list
+    return best_solution, best_bandwidth, error_list, best_error
 
 
 
@@ -60,8 +79,8 @@ os.makedirs(output_folder, exist_ok=True)
 res = 100
 X, Y = np.mgrid[-np.pi:np.pi:res*1j, -np.pi:np.pi:res*1j]
 query_points = np.column_stack([X.ravel(), Y.ravel()])
-x_covariance = np.array([[0.1, 0], [0, 0.1]])
-y_variance = 0.1
+x_covariance = np.array([[0.5, 0], [0, 0.5]])
+y_variance = 0.05
 n_samples = 2000
 
 
@@ -71,10 +90,10 @@ def make_plot_and_store(function, n_samples, x_covariance):
                                                     x_covariance, 
                                                     y_variance)                        # Shape (N, D) = (1, 1)
     covariance_matrices = x_covariance[np.newaxis, :, :].repeat(n_samples, axis=0)
-    bandwidth_grid = np.linspace(0.15, 0.5, 50)
-    round_dft_grid_size = 128
+    bandwidth_grid = np.linspace(0.15, 1, 100)
+    round_dft_grid_size = 256
 
-    solution_epanechnikov, bandwidth_epanechnikov, error_epanechnikov = find_best_solution(epanechnikov_kernel, 
+    solution_epanechnikov, bandwidth_epanechnikov, error_epanechnikov, mse_epanechnikov = find_best_solution(epanechnikov_kernel, 
                                                                         function, 
                                                                         query_points, 
                                                                         data_points, 
@@ -82,7 +101,7 @@ def make_plot_and_store(function, n_samples, x_covariance):
                                                                         covariance_matrices, 
                                                                         bandwidth_grid)
 
-    solution_deconvolving_rectangular, bandwidth_deconvolving_rectangular, error_deconvolving_rectangular = find_best_solution(deconvolving_kernel_rectangular_support, 
+    solution_deconvolving_rectangular, bandwidth_deconvolving_rectangular, error_deconvolving_rectangular, mse_deconvolving_rectangular = find_best_solution(deconvolving_kernel_rectangular_support, 
                                                                         function, 
                                                                         query_points, 
                                                                         data_points, 
@@ -91,7 +110,7 @@ def make_plot_and_store(function, n_samples, x_covariance):
                                                                         bandwidth_grid)
 
 
-    solution_deconvolving_round, bandwidth_deconvolving_round, error_deconvolving_round = find_best_solution(deconvolving_kernel_round_support,
+    solution_deconvolving_round, bandwidth_deconvolving_round, error_deconvolving_round, mse_deconvolving_round = find_best_solution(deconvolving_kernel_round_support,
                                                                         function,
                                                                         query_points,
                                                                         data_points,
@@ -103,7 +122,9 @@ def make_plot_and_store(function, n_samples, x_covariance):
 
     true_solution = function(query_points)
 
+    
     # Store all computed raw data to an .npz file for later reuse.
+    """
     data_folder = "/scratch/gpfs/GILLES/lh9809/data"
     os.makedirs(data_folder, exist_ok=True)
     data_path = os.path.join(data_folder, f"raw_data_{function.__name__}_{n_samples}.npz")
@@ -126,7 +147,7 @@ def make_plot_and_store(function, n_samples, x_covariance):
         bandwidth_deconvolving_round=bandwidth_deconvolving_round,
         error_deconvolving_round=error_deconvolving_round,
     )
-
+    """
 
 
     # Plotting
@@ -158,6 +179,7 @@ def make_plot_and_store(function, n_samples, x_covariance):
     block_width_inches = 7.5
     block_height_inches = block_width_inches * 0.75
     fig = plt.figure(figsize=(2 * block_width_inches, block_height_inches), layout='constrained')
+    fig.suptitle(f"n= {n_samples}")
     subfig_left, subfig_right = fig.subfigures(1, 2, wspace=0.04)
 
     # --- Left block: 2 x 2 grid of the estimated functions ---
@@ -189,11 +211,11 @@ def make_plot_and_store(function, n_samples, x_covariance):
     mse_colors = plt.cm.viridis(np.linspace(0, 0.8, 3))
 
     ax_mse.plot(bandwidth_grid, error_epanechnikov,
-                label="Epanechnikov kernel", color=mse_colors[0], linewidth=1.5)
+                label=f"Epanechnikov kernel (MSE = {mse_epanechnikov:.3f})", color=mse_colors[0], linewidth=1.5)
     ax_mse.plot(bandwidth_grid, error_deconvolving_rectangular,
-                label="Support: Square", color=mse_colors[1], linewidth=1.5)
+                label=f"Support: Square (MSE = {mse_deconvolving_rectangular:.3f})", color=mse_colors[1], linewidth=1.5)
     ax_mse.plot(bandwidth_grid, error_deconvolving_round,
-                label="Support: Circle", color=mse_colors[2], linewidth=1.5)
+                label=f"Support: Circle (MSE = {mse_deconvolving_round:.3f})", color=mse_colors[2], linewidth=1.5)
 
     ax_mse.set_title('Mean squared error')
     ax_mse.set_xlabel(r"Bandwidth $h$")
@@ -216,6 +238,8 @@ def make_plot_and_store(function, n_samples, x_covariance):
 FUNCTIONS = {
     "product_of_cos_function": product_of_cos_function,
     "absolute_value_function": absolute_value_function,
+    "cameraman_function": cameraman_function,
+    "cone_function": cone_function,
 }
 
 

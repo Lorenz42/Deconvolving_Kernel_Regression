@@ -10,12 +10,12 @@
 #SBATCH --job-name=deconv_experiment
 #SBATCH --output=/scratch/gpfs/GILLES/lh9809/my_experiments/deconv_%A_%a.out
 #SBATCH --error=/scratch/gpfs/GILLES/lh9809/my_experiments/deconv_%A_%a.err
-#SBATCH --array=0-7                 # MUST equal (#FUNCTIONS * #SAMPLE_SIZES) - 1
+#SBATCH --array=0-11                 # MUST equal (#FUNCTIONS * #SAMPLE_SIZES) - 1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=08:00:00
+#SBATCH --time=12:00:00
 #SBATCH --partition=cryoem
 #SBATCH --account=gilles
 #SBATCH --mail-type=begin,end,fail  # receive email notifications
@@ -26,8 +26,8 @@ set -euo pipefail
 # --- Parameter grid -------------------------------------------------------
 # IMPORTANT: keep the --array range above in sync with this grid.
 # total = (#FUNCTIONS * #SAMPLE_SIZES); --array must be 0..total-1.
-FUNCTIONS=(product_of_cos_function absolute_value_function)
-SAMPLE_SIZES=(500 1000 5000 10000)
+FUNCTIONS=(product_of_cos_function absolute_value_function cameraman_function cone_function)
+SAMPLE_SIZES=(1000 5000 10000)
 
 n_sizes=${#SAMPLE_SIZES[@]}
 total=$(( ${#FUNCTIONS[@]} * n_sizes ))
